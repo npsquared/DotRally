@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dot Rally</title>
+<meta name="description" content="A two-paddle ball game on a pocket-handheld dot-matrix LCD. Play the computer at three levels or a friend on the same device.">
+<style>
+:root {
+  --page: #d6d9d2;
+  --page-glow: #eceee8;
+  --bezel: #2f3236;
+  --bezel-edge: #45494e;
+  --hint: #555b52;
+  --hint-strong: #1f231c;
+  --f-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bz: 16px;
+  --gl: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #16181a; --page-glow: #24282a; --bezel: #0d0e10; --bezel-edge: #2c3034;
+    --hint: #949a8f; --hint-strong: #e2e5dc; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #16181a; --page-glow: #24282a; --bezel: #0d0e10; --bezel-edge: #2c3034;
+  --hint: #949a8f; --hint-strong: #e2e5dc; color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+body {
+  background: radial-gradient(ellipse 60% 55% at 50% 40%, var(--page-glow), var(--page) 75%) fixed, var(--page);
+  color: var(--hint-strong);
+  font-family: var(--f-ui);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.stage {
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px;
+  padding-block: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.screen {
+  width: min(100%, 520px);
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--bz);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--bezel-edge), var(--bezel) 40px);
+  box-shadow: 0 2px 0 rgba(255,255,255,.08) inset, 0 18px 40px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.2);
+}
+.glass {
+  border-radius: 6px;
+  padding: var(--gl);
+  background: linear-gradient(170deg, #b4c2a4 0%, #a3b493 55%, #97a987 100%);
+  box-shadow: inset 0 3px 8px rgba(0,0,0,.38), inset 0 0 0 2px rgba(0,0,0,.25);
+}
+canvas {
+  display: block; width: 100%; max-width: 100%; aspect-ratio: 240 / 364;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+  outline: none;
+}
+.hint {
+  margin: 0; max-width: 640px; text-align: center;
+  font-size: 13px; line-height: 1.5; color: var(--hint);
+  text-wrap: balance;
+}
+.hint b { color: var(--hint-strong); font-weight: 600; }
+@media (max-width: 600px) {
+  :root { --bz: 7px; --gl: 6px; }
+  .stage { padding-block: 10px; }
+  .screen { border-radius: 10px; }
+  .glass { border-radius: 4px; }
+}
+@media (hover: none) and (pointer: coarse) {
+  .hint { display: none; }
+}
+</style>
+</head>
+<body>
+<main class="stage" id="stage">
+  <div class="screen" id="screen">
+    <div class="glass" id="glass"><canvas id="lcd" tabindex="0" role="img" aria-label="Dot Rally screen. Drag on your half of the court to move your paddle."></canvas></div>
+  </div>
+  <p class="hint" id="hint"><b>Mouse</b> or <b>arrows</b> move your paddle · Two players: <b>W / S</b> and <b>↑ / ↓</b> · <b>P</b> pause · <b>Esc</b> menu · <b>M</b> sound<br>On a phone, drag anywhere on your half of the court.</p>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- pixel font (3x5, variable width) ----------
+  const FONT_SRC = {
+    'A': '010 101 111 101 101', 'B': '110 101 110 101 110', 'C': '011 100 100 100 011',
+    'D': '110 101 101 101 110', 'E': '111 100 110 100 111', 'F': '111 100 110 100 100',
+    'G': '011 100 101 101 011', 'H': '101 101 111 101 101', 'I': '111 010 010 010 111',
+    'J': '001 001 001 101 010', 'K': '101 101 110 101 101', 'L': '100 100 100 100 111',
+    'M': '10001 11011 10101 10001 10001', 'N': '1001 1101 1011 1001 1001',
+    'O': '010 101 101 101 010', 'P': '110 101 110 100 100', 'Q': '010 101 101 110 011',
+    'R': '110 101 110 101 101', 'S': '011 100 010 001 110', 'T': '111 010 010 010 010',
+    'U': '101 101 101 101 111', 'V': '101 101 101 101 010', 'W': '10001 10001 10101 11011 10001',
+    'X': '101 101 010 101 101', 'Y': '101 101 010 010 010', 'Z': '111 001 010 100 111',
+    '0': '111 101 101 101 111', '1': '010 110 010 010 111', '2': '110 001 010 100 111',
+    '3': '110 001 010 001 110', '4': '101 101 111 001 001', '5': '111 100 110 001 110',
+    '6': '011 100 111 101 111', '7': '111 001 010 010 010', '8': '111 101 111 101 111',
+    '9': '111 101 111 001 110', ' ': '00 00 00 00 00', '!': '1 1 1 0 1', '.': '0 0 0 0 1',
+    ':': '0 1 0 1 0', '-': '000 000 111 000 000', '<': '001 010 100 010 001',
+    '>': '100 010 001 010 100', '?': '110 001 010 000 010', '/': '001 001 010 100 100', "'": '1 1 0 0 0'
+  };
+  const FONT = {};
+  for (const k in FONT_SRC) FONT[k] = FONT_SRC[k].split(' ');
+  const textCols = (s) => [...s].reduce((w, ch) => w + (FONT[ch] || FONT[' '])[0].length + 1, 0) - 1;
+  const NOTE = ['0001100', '0001110', '0001011', '0001001', '0001000', '0111000', '1111000', '0110000'];
+
+  // ---------- court ----------
+  // The court is A dots across and B dots along. Side 0 is at b = 0 (bottom when tall, left when wide),
+  // side 1 at b = B. Physics runs in dot units; the matrix maps (a, b) to screen cells per layout.
+  const A = 48, B = 68;
+  const PAD_HALF = 5, PAD_FACE = 3;        // paddles are 10 dots long, 2 thick, face 3 dots from the end
+  const BALL_HALF = 1;                     // the ball is 2x2 dots
+  const LEVELS = ['EASY', 'MEDIUM', 'HARD'];
+  const TARGETS = [5, 7, 11];
+  const AI = [
+    { spd: 24, err: 5.5, track: true },
+    { spd: 38, err: 3.0 },
+    { spd: 56, err: 1.3, aim: true },
+  ];
+
+  const LAYOUTS = {
+    tall: {
+      W: 240, H: 364, tall: true,
+      field: { x: 8, y: 42, p: 4.65 },                     // 48 x 68 dots
+      buttons: { menu: [4, 4, 58, 32], pause: [146, 4, 42, 32], sound: [192, 4, 44, 32] },
+      info: { cx: 104, y: 9 },
+      title: { cx: 120, y: 58, px: 5 }, sub: { cx: 120, y: 96, px: 1.6 },
+      rows: { x: 20, y: 130, w: 200, h: 36, gap: 10 },
+    },
+    wide: {
+      W: 400, H: 320, tall: false,
+      field: { x: 8, y: 42, p: 5.64 },                     // 68 x 48 dots
+      buttons: { menu: [4, 4, 64, 32], pause: [306, 4, 42, 32], sound: [352, 4, 44, 32] },
+      info: { cx: 187, y: 9 },
+      title: { cx: 200, y: 54, px: 4.6 }, sub: { cx: 200, y: 86, px: 1.5 },
+      rows: { x: 80, y: 112, w: 240, h: 31, gap: 9 },
+    },
+  };
+  let L = LAYOUTS.tall;
+  const cols = () => (L.tall ? A : B);
+  const rows = () => (L.tall ? B : A);
+
+  // ---------- state ----------
+  const KEY = 'dot-rally-v1';
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let saved = {};
+  try { saved = JSON.parse(store.get(KEY) || '{}') || {}; } catch {}
+  const S = {
+    mode: 'boot', t0: 0,
+    players: saved.players === 2 ? 2 : 1,
+    level: [0, 1, 2].includes(saved.level) ? saved.level : 1,
+    target: TARGETS.includes(saved.target) ? saved.target : 7,
+    sound: saved.sound !== false,
+    menuSel: 4, kbd: false,
+    live: false, config: '',
+    g: null,
+  };
+  const save = () => store.set(KEY, JSON.stringify({ players: S.players, level: S.level, target: S.target, sound: S.sound }));
+  const configKey = () => `${S.players}/${S.level}/${S.target}`;
+
+  // ---------- game ----------
+  const keys = new Set();
+  const drags = new Map();          // pointerId -> { side, off }
+  const aim = [null, null];         // pointer target per side (a coordinate), or null
+  let hover = null;                 // mouse hover target for side 0 in 1-player
+
+  function newGame(now) {
+    S.g = {
+      score: [0, 0], pad: [A / 2, A / 2], ball: { a: A / 2, b: B / 2, va: 0, vb: 0 },
+      speed: 0, phase: 'ready', phaseAt: now, serveTo: Math.random() < 0.5 ? 0 : 1,
+      lastScorer: -1, aiErr: 0, aiAim: 0, hits: 0, before: null,
+    };
+    S.live = true; S.config = configKey();
+    aim[0] = aim[1] = null; drags.clear();
+    S.mode = 'play';
+    sfx.start();
+  }
+  function setPhase(p, now) { S.g.phase = p; S.g.phaseAt = now; }
+
+  function serve(now) {
+    const g = S.g;
+    const ang = (Math.random() * 25 + 8) * Math.PI / 180 * (Math.random() < 0.5 ? -1 : 1);
+    g.speed = 36;
+    g.ball = { a: A / 2 + (Math.random() * 10 - 5), b: B / 2, va: g.speed * Math.sin(ang), vb: g.speed * Math.cos(ang) * (g.serveTo === 0 ? -1 : 1) };
+    g.hits = 0;
+    rollAi();
+    setPhase('rally', now);
+  }
+  function rollAi() {
+    const lv = AI[S.level];
+    S.g.aiErr = (Math.random() * 2 - 1) * lv.err;
+    S.g.aiAim = lv.aim ? (Math.random() < 0.5 ? -1 : 1) * (1.5 + Math.random() * 2.5) : 0;
+  }
+
+  function reflectA(a) {
+    const lo = BALL_HALF, hi = A - BALL_HALF, span = hi - lo;
+    let x = (a - lo) % (2 * span); if (x < 0) x += 2 * span;
+    return lo + (x > span ? 2 * span - x : x);
+  }
+
+  function cpuTarget() {
+    const g = S.g, b = g.ball, lv = AI[S.level];
+    if (g.phase !== 'rally' || b.vb <= 0) return lv.track ? g.pad[1] + (A / 2 - g.pad[1]) * 0.02 : A / 2;
+    if (lv.track) return b.b > B * 0.42 ? b.a + g.aiErr : g.pad[1];
+    const t = (B - PAD_FACE - BALL_HALF - b.b) / b.vb;
+    return reflectA(b.a + b.va * t) + g.aiErr + g.aiAim;
+  }
+
+  const clampPad = (x) => Math.max(PAD_HALF, Math.min(A - PAD_HALF, x));
+  function movePads(dt) {
+    const g = S.g;
+    const d0 = (keys.has('s') || keys.has('d') ? 1 : 0) - (keys.has('w') || keys.has('a') ? 1 : 0);
+    const d1 = (keys.has('ArrowDown') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowUp') || keys.has('ArrowLeft') ? 1 : 0);
+    const dirs = S.players === 1 ? [Math.max(-1, Math.min(1, d0 + d1)), 0] : [d0, d1];
+    for (let s = 0; s < 2; s++) {
+      if (S.players === 1 && s === 1) {
+        const t = cpuTarget(), lv = AI[S.level];
+        const dx = t - g.pad[1], m = lv.spd * dt;
+        g.pad[1] = clampPad(g.pad[1] + Math.max(-m, Math.min(m, dx)));
+        continue;
+      }
+      if (dirs[s]) { aim[s] = null; if (s === 0) hover = null; g.pad[s] = clampPad(g.pad[s] + dirs[s] * 72 * dt); continue; }
+      const t = aim[s] ?? (s === 0 ? hover : null);
+      if (t != null) {
+        const dx = clampPad(t) - g.pad[s], m = 220 * dt;
+        g.pad[s] += Math.max(-m, Math.min(m, dx));
+      }
+    }
+  }
+
+  function hitPaddle(side) {
+    const g = S.g, b = g.ball;
+    const off = Math.max(-1, Math.min(1, (b.a - g.pad[side]) / (PAD_HALF + BALL_HALF)));
+    const ang = off * 58 * Math.PI / 180;
+    g.speed = Math.min(92, g.speed * 1.055 + 0.6);
+    b.va = g.speed * Math.sin(ang);
+    b.vb = g.speed * Math.cos(ang) * (side === 0 ? 1 : -1);
+    b.b = side === 0 ? PAD_FACE + BALL_HALF : B - PAD_FACE - BALL_HALF;
+    g.hits++;
+    if (side === 0) rollAi();
+    sfx.paddle();
+  }
+
+  function stepBall(dt, now) {
+    const g = S.g, b = g.ball;
+    const n = Math.max(1, Math.ceil(g.speed * dt / 0.4));
+    const h = dt / n;
+    for (let i = 0; i < n; i++) {
+      b.a += b.va * h; b.b += b.vb * h;
+      if (b.a < BALL_HALF) { b.a = 2 * BALL_HALF - b.a; b.va = Math.abs(b.va); sfx.wall(); }
+      if (b.a > A - BALL_HALF) { b.a = 2 * (A - BALL_HALF) - b.a; b.va = -Math.abs(b.va); sfx.wall(); }
+      const over = (side) => Math.abs(b.a - g.pad[side]) < PAD_HALF + BALL_HALF;
+      if (b.vb < 0 && b.b - BALL_HALF <= PAD_FACE && b.b - BALL_HALF > PAD_FACE - 1.6 && over(0)) hitPaddle(0);
+      else if (b.vb > 0 && b.b + BALL_HALF >= B - PAD_FACE && b.b + BALL_HALF < B - PAD_FACE + 1.6 && over(1)) hitPaddle(1);
+      if (b.b < -BALL_HALF * 2) return point(1, now);
+      if (b.b > B + BALL_HALF * 2) return point(0, now);
+    }
+  }
+
+  function point(side, now) {
+    const g = S.g;
+    g.score[side]++;
+    g.lastScorer = side;
+    g.serveTo = 1 - side;            // the side that lost the point receives the next serve
+    if (g.score[side] >= S.target) { setPhase('over', now); S.live = false; sfx.win(S.players === 1 && side === 1); }
+    else { setPhase('point', now); sfx.score(S.players === 1 && side === 1); }
+  }
+
+  function update(dt, now) {
+    if (S.mode !== 'play') return;
+    const g = S.g;
+    if (g.phase === 'pause') return;
+    movePads(dt);
+    if (g.phase === 'ready' && now - g.phaseAt > 1300) setPhase('serve', now);
+    else if (g.phase === 'point' && now - g.phaseAt > 1000) { g.ball = { a: A / 2, b: B / 2, va: 0, vb: 0 }; setPhase('serve', now); }
+    else if (g.phase === 'serve' && now - g.phaseAt > 750) serve(now);
+    else if (g.phase === 'rally') stepBall(dt, now);
+  }
+
+  function pause(now) { const g = S.g; if (!g || g.phase === 'over' || g.phase === 'pause') return; g.before = { phase: g.phase, t: now - g.phaseAt }; setPhase('pause', now); sfx.blip(500); }
+  function resume(now) { const g = S.g; if (!g || g.phase !== 'pause') return; g.phase = g.before.phase; g.phaseAt = now - g.before.t; sfx.blip(900); }
+  function togglePause(now) { if (S.g?.phase === 'pause') resume(now); else pause(now); }
+
+  function toMenu() { if (S.mode === 'play') pause(performance.now()); S.mode = 'menu'; S.menuSel = 4; sfx.blip(700); }
+  function startOrResume(now) {
+    if (S.live && S.config === configKey() && S.g) { S.mode = 'play'; resume(now); }
+    else newGame(now);
+  }
+  function menuChange(row, dir, now) {
+    if (row === 0) { S.players = S.players === 1 ? 2 : 1; sfx.move(); }
+    else if (row === 1) { if (S.players === 1) { S.level = (S.level + dir + 3) % 3; sfx.move(); } }
+    else if (row === 2) { S.target = TARGETS[(TARGETS.indexOf(S.target) + dir + 3) % 3]; sfx.move(); }
+    else if (row === 3) { S.sound = !S.sound; sfx.blip(1200); }
+    else if (row === 4) { startOrResume(now); }
+    save();
+  }
+  function toggleSound() { S.sound = !S.sound; save(); sfx.blip(1200); }
+
+  // ---------- sound ----------
+  let ac = null;
+  function ensureAudio() {
+    if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { ac = null; } }
+    if (ac && ac.state === 'suspended') ac.resume();
+  }
+  function tone(freq, at, dur, vol = 0.05, type = 'square') {
+    if (!S.sound || !ac) return;
+    const t = ac.currentTime + at;
+    const o = ac.createOscillator(), gn = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    gn.gain.setValueAtTime(vol, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(gn).connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  const seq = (notes, step, vol) => notes.forEach((f, i) => f && tone(f, i * step, step * 0.9, vol));
+  const sfx = {
+    blip: (f) => tone(f, 0, 0.05, 0.04),
+    move: () => tone(880, 0, 0.04, 0.035),
+    paddle: () => tone(620, 0, 0.06, 0.05),
+    wall: () => tone(310, 0, 0.05, 0.04),
+    start: () => seq([523, 659, 784], 0.07, 0.04),
+    score: (bad) => seq(bad ? [392, 294] : [784, 1047], 0.09, 0.045),
+    win: (bad) => seq(bad ? [392, 330, 262, 196] : [523, 659, 784, 1047, 0, 1047], 0.11, 0.045),
+  };
+
+  // ---------- sizing ----------
+  const canvas = document.getElementById('lcd');
+  const stage = document.getElementById('stage');
+  const screenEl = document.getElementById('screen');
+  const glassEl = document.getElementById('glass');
+  const hintEl = document.getElementById('hint');
+  const ctx = canvas.getContext('2d');
+  let scale = 1;
+  const cssPx = (el, prop) => parseFloat(getComputedStyle(el)[prop]) || 0;
+
+  function resizeBacking() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const cw = canvas.clientWidth || L.W;
+    canvas.width = Math.round(cw * dpr);
+    canvas.height = Math.round(cw * dpr * L.H / L.W);
+    scale = canvas.width / L.W;
+  }
+  // Pick the layout with the bigger dots, then the biggest screen that fits without scrolling.
+  function fit() {
+    const viewH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const avW = stage.clientWidth - cssPx(stage, 'paddingLeft') - cssPx(stage, 'paddingRight');
+    const hintH = getComputedStyle(hintEl).display === 'none' ? 0 : hintEl.offsetHeight + cssPx(stage, 'rowGap');
+    const avH = viewH - cssPx(stage, 'paddingTop') - cssPx(stage, 'paddingBottom') - hintH;
+    const frame = 2 * (cssPx(screenEl, 'paddingLeft') + cssPx(glassEl, 'paddingLeft'));
+    const cw = avW - frame, ch = avH - frame;
+    const dotPx = (l) => Math.min(cw / l.W, ch / l.H, 2.6) * l.field.p;
+    const next = dotPx(LAYOUTS.wide) > dotPx(LAYOUTS.tall) * 1.08 ? LAYOUTS.wide : LAYOUTS.tall;
+    if (next !== L) { L = next; drags.clear(); aim[0] = aim[1] = null; }
+    const s = Math.max(0.5, Math.min(cw / L.W, ch / L.H, 2.6));
+    canvas.style.aspectRatio = `${L.W} / ${L.H}`;
+    screenEl.style.width = Math.floor(L.W * s + frame) + 'px';
+    resizeBacking();
+  }
+  new ResizeObserver(resizeBacking).observe(canvas);
+  window.addEventListener('resize', fit);
+  window.visualViewport?.addEventListener('resize', fit);
+  fit();
+
+  // ---------- input ----------
+  const inRect = (x, y, r) => x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
+  function rowRect(i) { const r = L.rows; return [r.x, r.y + i * (r.h + r.gap), r.w, r.h]; }
+  const toLogical = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    return [(e.clientX - rect.left) / rect.width * L.W, (e.clientY - rect.top) / rect.height * L.H];
+  };
+  // screen point -> court coordinates (a across, b along)
+  function toCourt(x, y) {
+    const f = L.field;
+    const cx = (x - f.x) / f.p, cy = (y - f.y) / f.p;
+    return L.tall ? { a: cx, b: B - cy } : { a: cy, b: cx };
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.focus({ preventScroll: true });
+    ensureAudio();
+    S.kbd = false;
+    const now = performance.now();
+    const [x, y] = toLogical(e);
+    if (S.mode === 'boot') { S.mode = 'menu'; return; }
+    if (S.mode === 'menu') {
+      for (let i = 0; i < 5; i++) {
+        const r = rowRect(i), g = L.rows.gap / 2;
+        if (inRect(x, y, [r[0] - 10, r[1] - g, r[2] + 20, r[3] + 2 * g])) { S.menuSel = i; menuChange(i, 1, now); return; }
+      }
+      return;
+    }
+    const Bt = L.buttons;
+    if (inRect(x, y, Bt.menu)) { toMenu(); return; }
+    if (inRect(x, y, Bt.pause)) { togglePause(now); return; }
+    if (inRect(x, y, Bt.sound)) { toggleSound(); return; }
+    const g = S.g;
+    if (g.phase === 'over') { newGame(now); return; }
+    if (g.phase === 'pause') { resume(now); return; }
+    const c = toCourt(x, y);
+    const side = S.players === 1 ? 0 : (c.b < B / 2 ? 0 : 1);
+    drags.set(e.pointerId, { side, off: g.pad[side] - c.a });
+    aim[side] = g.pad[side];
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (S.mode !== 'play' || !S.g) return;
+    const [x, y] = toLogical(e);
+    const c = toCourt(x, y);
+    const d = drags.get(e.pointerId);
+    if (d) { aim[d.side] = c.a + d.off; return; }
+    if (e.pointerType === 'mouse' && S.players === 1 && y > L.field.y) hover = c.a;
+  });
+  const endDrag = (e) => { const d = drags.get(e.pointerId); if (d) { aim[d.side] = null; drags.delete(e.pointerId); } };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  const MOVE_KEYS = ['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  const normKey = (k) => (k.length === 1 ? k.toLowerCase() : k);
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = normKey(e.key);
+    const handled = MOVE_KEYS.includes(k) || ['Enter', ' ', 'Escape', 'Backspace', 'm', 'p', 'n'].includes(k);
+    if (!handled) return;
+    e.preventDefault();
+    ensureAudio();
+    const now = performance.now();
+    if (k === 'm') { toggleSound(); return; }
+    if (S.mode === 'boot') { S.mode = 'menu'; return; }
+    if (S.mode === 'menu') {
+      if (e.repeat && !MOVE_KEYS.includes(k)) return;
+      const up = k === 'ArrowUp' || k === 'w', down = k === 'ArrowDown' || k === 's';
+      const left = k === 'ArrowLeft' || k === 'a', right = k === 'ArrowRight' || k === 'd';
+      S.kbd = true;
+      if (up || down) { S.menuSel = (S.menuSel + (up ? 4 : 1)) % 5; sfx.move(); }
+      else if (left || right) { if (S.menuSel < 3) menuChange(S.menuSel, left ? -1 : 1, now); }
+      else if (k === 'Enter' || k === ' ') menuChange(S.menuSel, 1, now);
+      else if ((k === 'Escape' || k === 'Backspace') && S.live) startOrResume(now);
+      return;
+    }
+    const g = S.g;
+    if (MOVE_KEYS.includes(k)) { keys.add(k); return; }
+    if (e.repeat) return;
+    if (k === 'Escape' || k === 'Backspace') { toMenu(); return; }
+    if (k === 'n') { newGame(now); return; }
+    if (g.phase === 'over' && (k === 'Enter' || k === ' ')) { newGame(now); return; }
+    if (k === 'p' || k === ' ' || (k === 'Enter' && g.phase === 'pause')) togglePause(now);
+  });
+  window.addEventListener('keyup', (e) => keys.delete(normKey(e.key)));
+  window.addEventListener('blur', () => { keys.clear(); pause(performance.now()); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(performance.now()); });
+
+  // ---------- rendering ----------
+  const INK = 'rgba(20,28,16,0.9)';
+  const DIM = 'rgba(20,28,16,0.34)';
+  const SHADOW = 'rgba(20,30,10,0.16)';
+  const GHOST = 'rgba(25,40,10,0.075)';
+  let pass = 'ghost';
+  const printed = () => pass !== 'ghost';
+
+  function pixText(str, x, y, p, lit = true, align = 'center') {
+    if (!lit || !printed()) return;
+    const w = textCols(str) * p;
+    let cx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+    const d = p * 0.88;
+    for (const ch of str) {
+      const g = FONT[ch] || FONT[' '];
+      for (let r = 0; r < 5; r++) for (let c = 0; c < g[r].length; c++)
+        if (g[r][c] === '1') ctx.fillRect(cx + c * p, y + r * p, d, d);
+      cx += (g[0].length + 1) * p;
+    }
+  }
+  function frameRect(r, thick = 1.6, radius = 5) {
+    if (!printed()) return;
+    ctx.save();
+    ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = thick;
+    ctx.beginPath(); ctx.roundRect(r[0] + thick / 2, r[1] + thick / 2, r[2] - thick, r[3] - thick, radius); ctx.stroke();
+    ctx.restore();
+  }
+  function noteIcon(cx, cy, p, lit) {
+    const x0 = cx - 3.5 * p, y0 = cy - 4 * p;
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 7; c++)
+      if (NOTE[r][c] === '1' && (pass === 'ghost' || lit)) ctx.fillRect(x0 + c * p, y0 + r * p, p * 0.86, p * 0.86);
+    if (!lit && printed()) {   // a struck-through note when muted
+      for (let i = 0; i < 9; i++) ctx.fillRect(x0 - p + i * p, y0 + 8 * p - i * p - p, p * 0.86, p * 0.86);
+    }
+  }
+  function pauseIcon(cx, cy, p, paused) {
+    if (!printed()) return;
+    if (paused) {   // play triangle
+      for (let r = 0; r < 7; r++) { const w = r < 4 ? r + 1 : 7 - r; for (let c = 0; c < w; c++) ctx.fillRect(cx - 2 * p + c * p, cy - 3.5 * p + r * p, p * 0.86, p * 0.86); }
+    } else {
+      for (let r = 0; r < 7; r++) for (const c of [0, 1, 3, 4]) ctx.fillRect(cx - 2.5 * p + c * p, cy - 3.5 * p + r * p, p * 0.86, p * 0.86);
+    }
+  }
+
+  // ----- the court matrix: 0 off, 1 dim, 2 lit -----
+  let M = new Uint8Array(A * B), MC = A;
+  const setCell = (x, y, v) => { x |= 0; y |= 0; if (x >= 0 && y >= 0 && x < MC && y < M.length / MC) M[y * MC + x] = Math.max(M[y * MC + x], v); };
+  const clearBox = (x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (x >= 0 && y >= 0 && x < MC && y < M.length / MC) M[y * MC + x] = 0; };
+  // court cell (a, b) -> screen cell
+  const plot = (a, b, v) => (L.tall ? setCell(a, B - 1 - b, v) : setCell(b, a, v));
+  function mText(str, cx, y, sc = 1, v = 2) {
+    const w = textCols(str) * sc;
+    let x = Math.round(cx - w / 2);
+    for (const ch of str) {
+      const g = FONT[ch] || FONT[' '];
+      for (let r = 0; r < 5; r++) for (let c = 0; c < g[r].length; c++)
+        if (g[r][c] === '1') for (let i = 0; i < sc; i++) for (let j = 0; j < sc; j++) setCell(x + c * sc + i, y + r * sc + j, v);
+      x += (g[0].length + 1) * sc;
+    }
+    return w;
+  }
+  function mBanner(lines, now) {
+    const C = cols(), R = rows();
+    const h = lines.length * 7 - 2;
+    const y0 = Math.round(R / 2 - h / 2);
+    const w = Math.max(...lines.map((l) => textCols(l)));
+    clearBox(Math.round(C / 2 - w / 2) - 2, y0 - 2, w + 4, h + 4);
+    lines.forEach((l, i) => mText(l, C / 2, y0 + i * 7, 1, 2));
+  }
+
+  function buildCourt(now) {
+    const C = cols(), R = rows();
+    MC = C; M = new Uint8Array(C * R);
+    const g = S.g;
+    // centre net (dashed, dim)
+    for (let a = 0; a < A; a++) if (a % 4 < 2) { plot(a, B / 2 - 1, 1); plot(a, B / 2, 1); }
+    // scores, dim, big; the side that just scored blinks lit
+    const flash = (g.phase === 'point' || g.phase === 'over') && Math.floor((now - g.phaseAt) / 160) % 2 === 0;
+    const sc = (side) => (flash && g.lastScorer === side ? 2 : 1);
+    if (L.tall) {
+      mText(String(g.score[1]), C / 2, R / 2 - 21, 2, sc(1));
+      mText(String(g.score[0]), C / 2, R / 2 + 12, 2, sc(0));
+    } else {
+      const s0 = String(g.score[0]), s1 = String(g.score[1]);
+      mText(s0, C / 2 - 5 - textCols(s0), 4, 2, sc(0));
+      mText(s1, C / 2 + 5 + textCols(s1), 4, 2, sc(1));
+    }
+    // paddles
+    for (let s = 0; s < 2; s++) {
+      const b0 = s === 0 ? PAD_FACE - 2 : B - PAD_FACE;
+      const a0 = Math.round(g.pad[s] - PAD_HALF);
+      for (let i = 0; i < PAD_HALF * 2; i++) for (let j = 0; j < 2; j++) plot(a0 + i, b0 + j, 2);
+    }
+    // ball
+    const ballVisible = g.phase === 'rally' || g.phase === 'pause' && g.before?.phase === 'rally' ||
+      (g.phase === 'serve' && Math.floor((now - g.phaseAt) / 125) % 2 === 0);
+    if (ballVisible) {
+      const ba = Math.floor(g.ball.a - BALL_HALF), bb = Math.floor(g.ball.b - BALL_HALF);
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) plot(ba + i, bb + j, 2);
+    }
+    // banners
+    const name = (s) => (S.players === 1 ? (s === 0 ? 'YOU' : 'CPU') : 'P' + (s + 1));
+    if (g.phase === 'ready') {
+      const t = now - g.phaseAt;
+      mBanner(t < 650 ? ['READY'] : ['GO!'], now);
+    } else if (g.phase === 'pause') {
+      mBanner(['PAUSED', 'TAP TO GO'], now);
+    } else if (g.phase === 'over') {
+      const w = g.lastScorer;
+      const msg = S.players === 1 ? (w === 0 ? 'YOU WIN!' : 'CPU WINS') : name(w) + ' WINS!';
+      mBanner(now - g.phaseAt < 1200 || Math.floor((now - g.phaseAt) / 1400) % 2 === 0 ? [msg, `${g.score[0]} - ${g.score[1]}`] : [msg, 'PLAY AGAIN'], now);
+    }
+  }
+  function buildBoot() {
+    MC = cols(); M = new Uint8Array(cols() * rows()).fill(2);
+  }
+
+  function drawMatrix() {
+    const f = L.field, p = f.p, d = p * 0.86, C = MC, R = M.length / MC;
+    for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+      const v = M[y * C + x];
+      if (pass === 'ghost' || (pass === 'shadow' && v) || (pass === 'ink' && v === 2) || (pass === 'dim' && v === 1))
+        ctx.fillRect(f.x + x * p, f.y + y * p, d, d);
+    }
+  }
+  const fieldRect = () => [L.field.x - 3, L.field.y - 3, cols() * L.field.p + 5, rows() * L.field.p + 5];
+
+  function sceneHeader(now) {
+    const Bt = L.buttons, g = S.g;
+    frameRect(Bt.menu); pixText('MENU', Bt.menu[0] + Bt.menu[2] / 2, Bt.menu[1] + Bt.menu[3] / 2 - 5, 2);
+    frameRect(Bt.pause); pauseIcon(Bt.pause[0] + Bt.pause[2] / 2, Bt.pause[1] + Bt.pause[3] / 2, 2.4, g && g.phase === 'pause');
+    frameRect(Bt.sound); noteIcon(Bt.sound[0] + Bt.sound[2] / 2, Bt.sound[1] + Bt.sound[3] / 2, 2.6, S.sound);
+    const i = L.info;
+    pixText(S.players === 1 ? 'CPU ' + LEVELS[S.level] : '2 PLAYERS', i.cx, i.y, 1.3);
+    pixText('FIRST TO ' + S.target, i.cx, i.y + 12, 1.3);
+  }
+
+  function scenePlay(now) {
+    frameRect(fieldRect(), 1.2, 3);
+    sceneHeader(now);
+  }
+  function sceneMenu(now) {
+    const wide = !L.tall;
+    pixText('DOT RALLY', L.title.cx, L.title.y, L.title.px);
+    pixText('A POCKET PADDLE GAME', L.sub.cx, L.sub.y, L.sub.px);
+    const items = [
+      ['PLAYERS', S.players === 1 ? '1 VS CPU' : '2'],
+      ['LEVEL', S.players === 1 ? LEVELS[S.level] : '-'],
+      ['POINTS', String(S.target)],
+      ['SOUND', S.sound ? 'ON' : 'OFF'],
+      [S.live && S.config === configKey() ? 'RESUME' : 'START', ''],
+    ];
+    const p = wide ? 1.8 : 2.2;
+    items.forEach(([label, val], i) => {
+      const r = rowRect(i);
+      frameRect(r, i === 4 ? 2.6 : 1.4, 5);
+      const ty = r[1] + r[3] / 2 - 2.5 * p;
+      const sel = S.menuSel === i && (S.kbd || i === 4);
+      const arrow = sel && Math.floor(now / 300) % 2 === 0;
+      if (i === 4) {
+        pixText(label, r[0] + r[2] / 2, ty, p * 1.2);
+        pixText('>', r[0] + 12, ty, p * 1.2, arrow, 'left');
+        pixText('<', r[0] + r[2] - 12, ty, p * 1.2, arrow, 'right');
+      } else {
+        pixText(label, r[0] + 14, ty, p, true, 'left');
+        pixText(val, r[0] + r[2] - 14, ty, p, true, 'right');
+        pixText('>', r[0] + 5, ty, p, sel && arrow, 'left');
+      }
+    });
+  }
+  function sceneBoot(now) {
+    frameRect(fieldRect(), 1.2, 3);
+    sceneHeader(now);
+  }
+
+  function draw(now) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    const inPlay = S.mode !== 'menu';
+    if (S.mode === 'boot') buildBoot(); else if (S.mode === 'play') buildCourt(now);
+    const ui = S.mode === 'boot' ? sceneBoot : S.mode === 'menu' ? sceneMenu : scenePlay;
+    pass = 'ghost'; ctx.fillStyle = GHOST; if (inPlay) drawMatrix(); ui(now);
+    pass = 'shadow'; ctx.save(); ctx.translate(1.3, 1.5); ctx.fillStyle = SHADOW; if (inPlay) drawMatrix(); ui(now); ctx.restore();
+    pass = 'dim'; ctx.fillStyle = DIM; if (inPlay) drawMatrix();
+    pass = 'ink'; ctx.fillStyle = INK; if (inPlay) drawMatrix(); ui(now);
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  function frame(now) {
+    const dt = Math.min(0.05, last ? (now - last) / 1000 : 0);
+    last = now;
+    if (S.mode === 'boot' && now - S.t0 > 900) { S.mode = 'menu'; S.menuSel = 4; }
+    update(dt, now);
+    draw(now);
+    requestAnimationFrame(frame);
+  }
+  S.t0 = performance.now();
+  requestAnimationFrame(frame);
+  window.__dotRally = { S, A, B };
+})();
+</script>
+</body>
+</html>
